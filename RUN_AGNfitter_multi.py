@@ -319,7 +319,7 @@ if __name__ == "__main__":
     # run for one source only and construct dictionary only for this source
     if args.independent:
 
-        for i in range(69, 1000, 1):
+        for i in range(0, 1000, 1):
 
             RUN_AGNfitter_onesource_independent(i, data_ALL, filters, models, clobbermodel=clobbermodel)
         
