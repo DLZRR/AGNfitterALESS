@@ -131,7 +131,7 @@ def STARBURST(path, modelsettings):
         Dwl, DnuLnu = dusttable['LAM'],dusttable['SED'] #micron, Lsun
         Pwl, PnuLnu = pahstable['LAM'],pahstable['SED'] #micron, Lsun
         Tdust = np.array(dusttable['TDUST'])[0] #K
-        fracPAH = np.arange(1.5, 5.0, 0.5)/100
+        fracPAH = np.arange(0.25, 6.25, 0.25)/100
         idxs=[np.arange(len(Tdust)), np.arange(len(fracPAH))]
         par_idxs_combinations = np.array(list(itertools.product(*idxs)))
 
