@@ -91,10 +91,10 @@ def ln_prior(z, dlum,bands, gal_Fnu, P, pars):
             return -np.inf
 
     #2. Prior on the luminosity
-    B_band_expected, B_band_thispoint = galaxy_Lumfct_prior( z, dlum, bands, gal_Fnu)    # Bband expectations
+    #B_band_expected, B_band_thispoint = galaxy_Lumfct_prior( z, dlum, bands, gal_Fnu)    # Bband expectations
     #if Bband magnitude in this trial is brighter than expected by the luminosity function, dont accept this one
-    if B_band_thispoint < (B_band_expected - 5):#2.5):
-        return -np.inf
+    #if B_band_thispoint < (B_band_expected - 5):#2.5):
+    #    return -np.inf
 
     return 0.
 
