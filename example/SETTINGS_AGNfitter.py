@@ -73,7 +73,7 @@ def CATALOG_settings():
 
     cat['use_central_wavelength'] = True # Option to use central wavelength if no wavelengths in table
 
-    cat['output_folder'] = '/data1/OUTPUT_AGNFitter/ALESS_OUTPUT/' #if no special OUTPUT folder, leave default
+    cat['output_folder'] = '/data1/OUTPUT_AGNfitter/ALESS_OUTPUT/' #if no special OUTPUT folder, leave default
 
 
     return cat
