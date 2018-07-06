@@ -95,6 +95,13 @@ def main(data, P, out, models):
         fig.savefig(data.output_folder+str(data.name)+'/SED_manyrealizations_' +str(data.name)+ '.'+out['plot_format'])
         plt.close(fig)
 
+    if out['chi_squared_value']:
+
+        chi_squared, nfilters = output.chi_squared_value()
+        header = 'chi-squared nfilters'
+        comments_output= '# Chi-squared value of best fit SED for source ' +str(data.name) + ' and number of filters used in fit\n' + '-------------------------------------------------------------------------------------' + '\n'
+        np.savetxt(data.output_folder +str(data.name)+'/chi_squared_'+str(data.name)+'.txt', np.c_[chi_squared, nfilters], delimiter = " ",fmt= "%1.4f", header=header, comments =comments_output)
+
 
 
 
@@ -124,6 +131,7 @@ class OUTPUT:
         self.z=self.data.z
         fluxobj_withintlums = FLUXES_ARRAYS(chain_obj, P,  self.out,'int_lums', self.models)
         fluxobj_4SEDplots = FLUXES_ARRAYS(chain_obj, P, self.out,'plot', self.models)
+        fluxobj_4SEDplots_best = FLUXES_ARRAYS(chain_obj, P, self.out, 'best_fit', self.models)
         if self.out['calc_intlum']:
             fluxobj_withintlums.fluxes( self.data)
             self.nuLnus = fluxobj_withintlums.nuLnus4plotting
@@ -131,10 +139,16 @@ class OUTPUT:
             self.int_lums = fluxobj_withintlums.int_lums
 
         if self.out['plotSEDrealizations']:
+            fluxobj_4SEDplots_best.fluxes(self.data)
             fluxobj_4SEDplots.fluxes(self.data)
             self.nuLnus = fluxobj_4SEDplots.nuLnus4plotting
+            self.nuLnus_best = fluxobj_4SEDplots_best.nuLnus4plotting
             self.filtered_modelpoints_nuLnu = fluxobj_4SEDplots.filtered_modelpoints_nuLnu
             self.allnus = fluxobj_4SEDplots.all_nus_rest
+
+        if self.out['chi_squared_value']:
+            fluxobj_4SEDplots_best.fluxes(self.data)
+            self.filtered_modelpoints_nuLnu_best = fluxobj_4SEDplots_best.filtered_modelpoints_nuLnu
 
     def write_parameters_outputvalues(self, P):        
 
@@ -147,7 +161,7 @@ class OUTPUT:
 
             SFR_IR = model.sfr_IR(self.int_lums[0]) #check that ['intlum_names'][0] is always L_IR(8-100)        
 
-            chain_others =np.column_stack((self.int_lums.T, SFR_IR))
+            chain_others = np.column_stack((self.int_lums.T, SFR_IR))
             outputvalues = np.column_stack((np.transpose(map(lambda v: (v[0],v[1],v[2],v[3],v[4]), zip(*np.percentile(chain_pars, [2.5,16, 50, 84,97.5], axis=0)))),
                                             np.transpose(map(lambda v: (v[0],v[1],v[2],v[3],v[4]), zip(*np.percentile(chain_others, [2.5,16, 50, 84,97.5], axis=0)))),
                                             np.transpose(np.percentile(self.chain.lnprob_flat, [2.5,16, 50, 84,97.5], axis=0)) ))  
@@ -160,6 +174,34 @@ class OUTPUT:
             outputvalues = np.column_stack((map(lambda v: (v[1], v[2]-v[1], v[1]-v[0]), zip(*np.percentile(chain_pars, [16, 50, 84],  axis=0))))) 
             outputvalues_header=' '.join( [ i for i in P['names']] )
         return outputvalues, outputvalues_header
+
+    def chi_squared_value(self):
+        #######Calculate chi-squared value of best-fit SED, excludes upper limits
+        ###returns: chi-squared and number of filters used in fit
+        ydata = self.data.fluxes[self.data.fluxes>0.]
+        yerror = self.data.fluxerrs[self.data.fluxes>0.]
+        yndflags = self.data.ndflag[self.data.fluxes>0.]
+
+        data_nus_obs = 10**self.data.nus[self.data.fluxes>0.]
+
+        distance= model.z2Dlum(self.z)
+        lumfactor = (4. * math.pi * distance**2.)
+        data_nuLnu_rest = ydata* data_nus_obs *lumfactor
+        data_errors_rest= yerror * data_nus_obs * lumfactor
+
+        det = [yndflags==1]
+        upp = [yndflags==0]
+
+        model_y = self.filtered_modelpoints_nuLnu_best[self.data.fluxes>0.][det]
+        obs_y = data_nuLnu_rest[det]
+        obs_err = data_errors_rest[det]
+        
+        nfilters = len(obs_y)
+        diff = [ (obs_y[x] - model_y[x]) ** 2 / (obs_err[x] ** 2) for x in xrange(nfilters) ]
+
+        chi_squared = np.sum(diff)
+
+        return chi_squared, nfilters
 
     def plot_PDFtriangle(self,parameterset, labels):        
 
@@ -190,36 +232,47 @@ class OUTPUT:
 
         distance= model.z2Dlum(self.z)
         lumfactor = (4. * math.pi * distance**2.)
-        data_nuLnu_rest = ydata* data_nus_obs *lumfactor
+        data_nuLnu_rest = ydata * data_nus_obs * lumfactor
         data_errors_rest= yerror * data_nus_obs * lumfactor
 
         SBnuLnu, BBnuLnu, GAnuLnu, TOnuLnu, TOTALnuLnu, BBnuLnu_deredd = self.nuLnus
+        SBnuLnu_best, BBnuLnu_best, GAnuLnu_best, TOnuLnu_best, TOTALnuLnu_best, BBnuLnu_deredd_best = self.nuLnus_best 
 
         #plotting settings
         fig, ax1, ax2 = SED_plotting_settings(all_nus_rest, data_nuLnu_rest, self.allnus)
         SBcolor, BBcolor, GAcolor, TOcolor, TOTALcolor= SED_colors(combination = 'a')
-        lw= 1.5
+        lw= 1.0
 
         for i in range(Nrealizations):
 
             #Settings for model lines
-            p2=ax1.plot(all_nus, SBnuLnu[i], marker="None", linewidth=lw, label="1 /sigma", color= SBcolor, alpha = 0.5)
-            p3=ax1.plot(all_nus, BBnuLnu[i], marker="None", linewidth=lw, label="1 /sigma",color= BBcolor, alpha = 0.5)
-            p4=ax1.plot(all_nus, GAnuLnu[i],marker="None", linewidth=lw, label="1 /sigma",color=GAcolor, alpha = 0.5)
-            p5=ax1.plot( all_nus, TOnuLnu[i], marker="None",  linewidth=lw, label="1 /sigma",color= TOcolor ,alpha = 0.5)
-            p1= ax1.plot( all_nus, TOTALnuLnu[i], marker="None", linewidth=lw,  label="1 /sigma", color= TOTALcolor, alpha= 0.5)
+            p2=ax1.plot(all_nus, SBnuLnu[i], marker="None", linewidth=lw, label="1 /sigma", color= SBcolor, alpha = 0.5,ls='--')
+            p3=ax1.plot(all_nus, BBnuLnu[i], marker="None", linewidth=lw, label="1 /sigma",color= BBcolor, alpha = 0.5,ls='--')
+            p4=ax1.plot(all_nus, GAnuLnu[i],marker="None", linewidth=lw, label="1 /sigma",color=GAcolor, alpha = 0.5,ls='--')
+            p5=ax1.plot( all_nus, TOnuLnu[i], marker="None",  linewidth=lw, label="1 /sigma",color= TOcolor ,alpha = 0.5,ls='--')
+            p1= ax1.plot( all_nus, TOTALnuLnu[i], marker="None", linewidth=lw,  label="1 /sigma", color= TOTALcolor, alpha= 0.5,ls='--')
+            p6 = ax1.plot(data_nus, self.filtered_modelpoints_nuLnu[i][self.data.fluxes>0.],   marker='o', linestyle="None",markersize=5, color="red", alpha =0.5)
+            
+        p2=ax1.plot(all_nus, SBnuLnu_best, marker="None", linewidth=2, label="1 /sigma", color= SBcolor, alpha = 1)
+        p3=ax1.plot(all_nus, BBnuLnu_best, marker="None", linewidth=2, label="1 /sigma",color= BBcolor, alpha = 1)
+        p4=ax1.plot(all_nus, GAnuLnu_best,marker="None", linewidth=2, label="1 /sigma",color=GAcolor, alpha = 1)
+        p5=ax1.plot( all_nus, TOnuLnu_best, marker="None",  linewidth=2, label="1 /sigma",color= TOcolor ,alpha = 1)
+        p1= ax1.plot( all_nus, TOTALnuLnu_best, marker="None", linewidth=2,  label="1 /sigma", color= TOTALcolor, alpha= 1)
+        p6=ax1.plot(data_nus, self.filtered_modelpoints_nuLnu_best[self.data.fluxes>0.], marker='o', linestyle="None", markersize=5, color="red", alpha=1)
 
-            p6 = ax1.plot(data_nus, self.filtered_modelpoints_nuLnu[i][self.data.fluxes>0.],   marker='o', linestyle="None",markersize=5, color="red", alpha =0.7)
+        det = [yndflags==1]
+        upp = [yndflags==0]
 
-            det = [yndflags==1]
-            upp = [yndflags==0]
-
-            upplimits = ax1.errorbar(data_nus[upp], 2.*data_nuLnu_rest[upp], yerr= data_errors_rest[upp]/2, uplims = True, linestyle='',  markersize=5, color="black")
-            (_, caps, _) = ax1.errorbar(data_nus[det], data_nuLnu_rest[det], yerr= data_errors_rest[det], capsize=4, linestyle="None", linewidth=1.5,  marker='o',markersize=5, color="black", alpha = 1)
+        upplimits = ax1.errorbar(data_nus[upp], 2.*data_nuLnu_rest[upp], yerr= data_errors_rest[upp]/2, uplims = True, linestyle='',  markersize=5, color="black")
+        (_, caps, _) = ax1.errorbar(data_nus[det], data_nuLnu_rest[det], yerr= data_errors_rest[det], capsize=4, linestyle="None", linewidth=1.5,  marker='o',markersize=5, color="black", alpha = 1)
 
 
         ax1.annotate(r'XID='+str(self.data.name)+r', z ='+ str(self.z), xy=(0, 1),  xycoords='axes points', xytext=(20, 250), textcoords='axes points' )#+ ', log $\mathbf{L}_{\mathbf{IR}}$= ' + str(Lir_agn) +', log $\mathbf{L}_{\mathbf{FIR}}$= ' + str(Lfir) + ',  log $\mathbf{L}_{\mathbf{UV}} $= '+ str(Lbol_agn)
         print ' => SEDs of '+ str(Nrealizations)+' different realization were plotted.'
+        
+        # Save best SED
+        special_array = np.column_stack((all_nus, TOTALnuLnu_best))
+        np.savetxt(self.data.output_folder + str(self.data.name) + '/SED_Best_Template_' + str(self.data.name) + '.txt', special_array)
 
         return fig
 
@@ -367,7 +420,7 @@ class FLUXES_ARRAYS:
         gal_obj,sb_obj,tor_obj, bbb_obj = data.dictkey_arrays
 
         # Take the  4 dictionaries for plotting. Dicts are described in DICTIONARIES_AGNfitter.py
-        _,_,_,_,STARBURSTFdict , BBBFdict, GALAXYFdict, TORUSFdict,_,_= data.dict_modelfluxes
+        _,_,_,_, STARBURSTFdict, BBBFdict, GALAXYFdict, TORUSFdict,_,_= data.dict_modelfluxes
 
         nsample, npar = self.chain_obj.flatchain.shape
         source = data.name
@@ -377,111 +430,193 @@ class FLUXES_ARRAYS:
         elif self.output_type == 'int_lums':
             par = self.chain_obj.flatchain[np.random.choice(nsample, (self.out['realizations2int'])),:]#.T        
         elif self.output_type == 'best_fit':
-            par= self.best_fit_pars
+            par= self.chain_obj.best_fit_pars
 
         if self.models['BBB'] =='D12_S' or self.models['BBB'] =='D12_K':
             self.all_nus_rest = np.arange(11.5, 19, 0.001) 
         else:
-            self.all_nus_rest = np.arange(11.5, 16.2, 0.001) 
-        for g in range(self.out['realizations2plot']):
+            self.all_nus_rest = np.arange(11.5, 16.2, 0.001)
+            
+        if self.output_type == 'plot' or self.output_type == 'int_lums':
+            
+            
+            for g in range(self.out['realizations2plot']):
 
             ## Pick dictionary key-values, nearest to the MCMC- parameter values
             ## Use pick_nD if model has more than one parameter,
             ## and pick_1D if it has only one.
-            gal_obj.pick_nD(par[g][self.P['idxs'][0]:self.P['idxs'][1]])  
-            tor_obj.pick_1D(par[g][self.P['idxs'][2]:self.P['idxs'][3]])            
+                gal_obj.pick_nD(par[g][self.P['idxs'][0]:self.P['idxs'][1]])  
+                tor_obj.pick_1D(par[g][self.P['idxs'][2]:self.P['idxs'][3]])            
 
-            if len(sb_obj.par_names)==1:
-                sb_obj.pick_1D(par[g][self.P['idxs'][1]:self.P['idxs'][2]])
-                all_sb_nus, sb_Fnus= STARBURSTFdict[sb_obj.matched_parkeys] 
-            else:
-                sb_obj.pick_nD(par[g][self.P['idxs'][1]:self.P['idxs'][2]])
-                all_sb_nus, sb_Fnus= STARBURSTFdict[tuple(sb_obj.matched_parkeys)] 
+                if len(sb_obj.par_names)==1:
+                    sb_obj.pick_1D(par[g][self.P['idxs'][1]:self.P['idxs'][2]])
+                    all_sb_nus, sb_Fnus= STARBURSTFdict[sb_obj.matched_parkeys] 
+                else:
+                    sb_obj.pick_nD(par[g][self.P['idxs'][1]:self.P['idxs'][2]])
+                    all_sb_nus, sb_Fnus= STARBURSTFdict[tuple(sb_obj.matched_parkeys)] 
 
-            if len(bbb_obj.par_names)==1:
-                GA, SB, TO, BB = par[g][-4:]
-                bbb_obj.pick_1D(par[g][self.P['idxs'][3]:self.P['idxs'][4]])
-                all_bbb_nus, bbb_Fnus = BBBFdict[bbb_obj.matched_parkeys] 
-            else:
-                GA, SB, TO = par[g][-3:]
-                BB = 0.
-                bbb_obj.pick_nD(par[g][self.P['idxs'][3]:self.P['idxs'][4]])
-                all_bbb_nus, bbb_Fnus = BBBFdict[tuple(bbb_obj.matched_parkeys)] 
+                if len(bbb_obj.par_names)==1:
+                    GA, SB, TO, BB = par[g][-4:]
+                    bbb_obj.pick_1D(par[g][self.P['idxs'][3]:self.P['idxs'][4]])
+                    all_bbb_nus, bbb_Fnus = BBBFdict[bbb_obj.matched_parkeys] 
+                #print bbb_Fnus
+                else:
+                    GA, SB, TO = par[g][-3:]
+                    BB = 0.
+                    bbb_obj.pick_nD(par[g][self.P['idxs'][3]:self.P['idxs'][4]])
+                    all_bbb_nus, bbb_Fnus = BBBFdict[tuple(bbb_obj.matched_parkeys)] 
 
 
             #Produce model fluxes at all_nus_rest for plotting, through interpolation
-            all_gal_nus, gal_Fnus = GALAXYFdict[tuple(gal_obj.matched_parkeys)] 
-            GAinterp = scipy.interpolate.interp1d(all_gal_nus, gal_Fnus, bounds_error=False, fill_value=0.)
-            all_gal_Fnus = GAinterp(self.all_nus_rest)
+                all_gal_nus, gal_Fnus = GALAXYFdict[tuple(gal_obj.matched_parkeys)] 
+                GAinterp = scipy.interpolate.interp1d(all_gal_nus, gal_Fnus, bounds_error=False, fill_value=0.)
+                all_gal_Fnus = GAinterp(self.all_nus_rest)
 
-            SBinterp = scipy.interpolate.interp1d(all_sb_nus, sb_Fnus, bounds_error=False, fill_value=0.)
-            all_sb_Fnus = SBinterp(self.all_nus_rest)
+                SBinterp = scipy.interpolate.interp1d(all_sb_nus, sb_Fnus, bounds_error=False, fill_value=0.)
+                all_sb_Fnus = SBinterp(self.all_nus_rest)
 
-            BBinterp = scipy.interpolate.interp1d(all_bbb_nus, bbb_Fnus, bounds_error=False, fill_value=0.)
-            all_bbb_Fnus = BBinterp(self.all_nus_rest)
+                BBinterp = scipy.interpolate.interp1d(all_bbb_nus, bbb_Fnus, bounds_error=False, fill_value=0.)
+                all_bbb_Fnus = BBinterp(self.all_nus_rest)
 
             ### Plot dereddened
-            if len(bbb_obj.par_names)==1:
-                all_bbb_nus, bbb_Fnus_deredd = BBBFdict['0.0']
-                BBderedinterp = scipy.interpolate.interp1d(all_bbb_nus, bbb_Fnus_deredd, bounds_error=False, fill_value=0.)
-                all_bbb_Fnus_deredd = BBderedinterp(self.all_nus_rest)
-            else:
-                all_bbb_Fnus_deredd = all_bbb_Fnus
+                if len(bbb_obj.par_names)==1:
+                    all_bbb_nus, bbb_Fnus_deredd = BBBFdict['0.0'] 
+                    BBderedinterp = scipy.interpolate.interp1d(all_bbb_nus, bbb_Fnus_deredd, bounds_error=False, fill_value=0.)
+                    all_bbb_Fnus_deredd = BBderedinterp(self.all_nus_rest)
+                else:
+                    all_bbb_Fnus_deredd = all_bbb_Fnus
+    
+                all_tor_nus, tor_Fnus= TORUSFdict[tor_obj.matched_parkeys]
+                TOinterp = scipy.interpolate.interp1d(all_tor_nus, np.log10(tor_Fnus), bounds_error=False, fill_value=0.)
+                all_tor_Fnus = 10**(TOinterp(self.all_nus_rest))        
+                all_tor_Fnus[self.all_nus_rest>16]= 0
 
-            all_tor_nus, tor_Fnus= TORUSFdict[tor_obj.matched_parkeys]
-            TOinterp = scipy.interpolate.interp1d(all_tor_nus, np.log10(tor_Fnus), bounds_error=False, fill_value=0.)
-            all_tor_Fnus = 10**(TOinterp(self.all_nus_rest))        
-            all_tor_Fnus[self.all_nus_rest>16]= 0
-
-            if self.output_type == 'plot':
-                par2= par[g]
-                filtered_modelpoints, _, _ = parspace.ymodel(data.nus,data.z, data.dlum, data.dictkey_arrays, data.dict_modelfluxes, self.P, *par2)
+                if self.output_type == 'plot':
+                    par2 = par[g]
+                    #print data.dictkey_arrays
+                    filtered_modelpoints, _, _ = parspace.ymodel(data.nus,data.z, data.dlum, data.dictkey_arrays, data.dict_modelfluxes, self.P, *par2)
+                    #print filtered_modelpoints
                 
-            #Using the costumized normalization 
-            SBFnu =   (all_sb_Fnus /1e20) *10**float(SB) 
-            BBFnu = (all_bbb_Fnus / 1e60) * 10**float(BB) #/1e60
-            GAFnu =   (all_gal_Fnus/ 1e18) * 10**float(GA) 
-            TOFnu =   (all_tor_Fnus/  1e-40) * 10**float(TO)
-            BBFnu_deredd = (all_bbb_Fnus_deredd /1e60) * 10**float(BB)
+                #Using the costumized normalization 
+                SBFnu =   (all_sb_Fnus /1e20) *10**float(SB) 
+                BBFnu = (all_bbb_Fnus/1e60) * 10**float(BB)# * (data.dlum)**2
+                GAFnu =   (all_gal_Fnus/ 1e18) * 10**float(GA) 
+                TOFnu =   (all_tor_Fnus/  1e-40) * 10**float(TO)
+                BBFnu_deredd = (all_bbb_Fnus_deredd /1e60) * 10**float(BB)
 
-            TOTALFnu =  SBFnu + BBFnu + GAFnu + TOFnu
+                TOTALFnu =  SBFnu + BBFnu + GAFnu + TOFnu
             
-            #Append to the list for all realizations
-            SBFnu_list.append(SBFnu)
-            BBFnu_list.append(BBFnu)
-            GAFnu_list.append(GAFnu)
-            TOFnu_list.append(TOFnu)
-            TOTALFnu_list.append(TOTALFnu)
-            BBFnu_deredd_list.append(BBFnu_deredd)
-            #Only if SED plotting: do the same with the  modelled flux values at each data point 
-            if self.output_type == 'plot':
-                filtered_modelpoints_list.append(filtered_modelpoints)
+                #Append to the list for all realizations
+                SBFnu_list.append(SBFnu)
+                BBFnu_list.append(BBFnu)
+                GAFnu_list.append(GAFnu)
+                TOFnu_list.append(TOFnu)
+                TOTALFnu_list.append(TOTALFnu)
+                BBFnu_deredd_list.append(BBFnu_deredd)
+                #Only if SED plotting: do the same with the  modelled flux values at each data point 
+                if self.output_type == 'plot':
+                    filtered_modelpoints_list.append(filtered_modelpoints)
 
 
-        #Convert lists into Numpy arrays
-        SBFnu_array = np.array(SBFnu_list)
-        BBFnu_array = np.array(BBFnu_list)
-        GAFnu_array = np.array(GAFnu_list)
-        TOFnu_array = np.array(TOFnu_list)
-        TOTALFnu_array = np.array(TOTALFnu_list)
-        BBFnu_array_deredd = np.array(BBFnu_deredd_list)    
+            #Convert lists into Numpy arrays
+            SBFnu_array = np.array(SBFnu_list)
+            BBFnu_array = np.array(BBFnu_list)
+            GAFnu_array = np.array(GAFnu_list)
+            TOFnu_array = np.array(TOFnu_list)
+            TOTALFnu_array = np.array(TOTALFnu_list)
+            BBFnu_array_deredd = np.array(BBFnu_deredd_list)    
 
-        #Put them all together to transport
-        FLUXES4plotting = (SBFnu_array, BBFnu_array, GAFnu_array, TOFnu_array, TOTALFnu_array,BBFnu_array_deredd)
-        #Convert Fluxes to nuLnu
-        self.nuLnus4plotting = self.FLUXES2nuLnu_4plotting(self.all_nus_rest, FLUXES4plotting, data.z)
+            #Put them all together to transport
+            FLUXES4plotting = (SBFnu_array, BBFnu_array, GAFnu_array, TOFnu_array, TOTALFnu_array,BBFnu_array_deredd)
+            #Convert Fluxes to nuLnu
+            self.nuLnus4plotting = self.FLUXES2nuLnu_4plotting(self.all_nus_rest, FLUXES4plotting, data.z)
+            
+        elif self.output_type == 'best_fit':
+            
+            ## Pick dictionary key-values, nearest to the MCMC- parameter values
+            ## Use pick_nD if model has more than one parameter,
+            ## and pick_1D if it has only one.
+                gal_obj.pick_nD(par[self.P['idxs'][0]:self.P['idxs'][1]])  
+                tor_obj.pick_1D(par[self.P['idxs'][2]:self.P['idxs'][3]])            
+
+                if len(sb_obj.par_names)==1:
+                    sb_obj.pick_1D(par[self.P['idxs'][1]:self.P['idxs'][2]])
+                    all_sb_nus, sb_Fnus= STARBURSTFdict[sb_obj.matched_parkeys] 
+                else:
+                    sb_obj.pick_nD(par[self.P['idxs'][1]:self.P['idxs'][2]])
+                    all_sb_nus, sb_Fnus= STARBURSTFdict[tuple(sb_obj.matched_parkeys)] 
+
+                if len(bbb_obj.par_names)==1:
+                    GA, SB, TO, BB = par[-4:]
+                    bbb_obj.pick_1D(par[self.P['idxs'][3]:self.P['idxs'][4]])
+                    all_bbb_nus, bbb_Fnus = BBBFdict[bbb_obj.matched_parkeys] 
+                #print bbb_Fnus
+                else:
+                    GA, SB, TO = par[-3:]
+                    BB = 0.
+                    bbb_obj.pick_nD(par[self.P['idxs'][3]:self.P['idxs'][4]])
+                    all_bbb_nus, bbb_Fnus = BBBFdict[tuple(bbb_obj.matched_parkeys)] 
+
+
+            #Produce model fluxes at all_nus_rest for plotting, through interpolation
+                all_gal_nus, gal_Fnus = GALAXYFdict[tuple(gal_obj.matched_parkeys)] 
+                GAinterp = scipy.interpolate.interp1d(all_gal_nus, gal_Fnus, bounds_error=False, fill_value=0.)
+                all_gal_Fnus = GAinterp(self.all_nus_rest)
+
+                SBinterp = scipy.interpolate.interp1d(all_sb_nus, sb_Fnus, bounds_error=False, fill_value=0.)
+                all_sb_Fnus = SBinterp(self.all_nus_rest)
+
+                BBinterp = scipy.interpolate.interp1d(all_bbb_nus, bbb_Fnus, bounds_error=False, fill_value=0.)
+                all_bbb_Fnus = BBinterp(self.all_nus_rest)
+
+            ### Plot dereddened
+                if len(bbb_obj.par_names)==1:
+                    all_bbb_nus, bbb_Fnus_deredd = BBBFdict['0.0'] 
+                    BBderedinterp = scipy.interpolate.interp1d(all_bbb_nus, bbb_Fnus_deredd, bounds_error=False, fill_value=0.)
+                    all_bbb_Fnus_deredd = BBderedinterp(self.all_nus_rest)
+                else:
+                    all_bbb_Fnus_deredd = all_bbb_Fnus
+    
+                all_tor_nus, tor_Fnus= TORUSFdict[tor_obj.matched_parkeys]
+                TOinterp = scipy.interpolate.interp1d(all_tor_nus, np.log10(tor_Fnus), bounds_error=False, fill_value=0.)
+                all_tor_Fnus = 10**(TOinterp(self.all_nus_rest))        
+                all_tor_Fnus[self.all_nus_rest>16]= 0
+
+                
+                par2 = par
+                #print data.dictkey_arrays
+                filtered_modelpoints, _, _ = parspace.ymodel(data.nus,data.z, data.dlum, data.dictkey_arrays, data.dict_modelfluxes, self.P, *par2)
+                #print filtered_modelpoints
+                
+                #Using the costumized normalization 
+                SBFnu =   (all_sb_Fnus /1e20) *10**float(SB) 
+                BBFnu = (all_bbb_Fnus/1e60) * 10**float(BB)# * (data.dlum)**2
+                GAFnu =   (all_gal_Fnus/ 1e18) * 10**float(GA) 
+                TOFnu =   (all_tor_Fnus/  1e-40) * 10**float(TO)
+                BBFnu_deredd = (all_bbb_Fnus_deredd /1e60) * 10**float(BB)
+
+                TOTALFnu =  SBFnu + BBFnu + GAFnu + TOFnu
+
+                #Put them all together to transport
+                FLUXES4plotting = (SBFnu, BBFnu, GAFnu, TOFnu, TOTALFnu,BBFnu_deredd)
+                #Convert Fluxes to nuLnu
+                self.nuLnus4plotting = self.FLUXES2nuLnu_4plotting(self.all_nus_rest, FLUXES4plotting, data.z)
 
         #Only if SED plotting:
         if self.output_type == 'plot':
             filtered_modelpoints = np.array(filtered_modelpoints_list)
-            distance= model.z2Dlum(data.z)
+            distance = model.z2Dlum(data.z)
             lumfactor = (4. * math.pi * distance**2.)
-            self.filtered_modelpoints_nuLnu = (filtered_modelpoints *lumfactor* 10**(data.nus))
+            self.filtered_modelpoints_nuLnu = (filtered_modelpoints * lumfactor * 10**(data.nus))
+            #print self.filtered_modelpoints_nuLnu
+            #print 10**(data.nus)
         #Only if calculating integrated luminosities:    
         elif self.output_type == 'int_lums':
-            self.int_lums= np.log10(self.integrated_luminosities(self.out ,self.all_nus_rest, self.nuLnus4plotting))
-        # elif self.output_type == 'best_fit':
-        #     self.filtered_modelpoints_nuLnu = self.FLUXES2nuLnu_4plotting(all_nus_rest,  filtered_modelpoints, self.chain_obj.data.z)
+            self.int_lums = np.log10(self.integrated_luminosities(self.out ,self.all_nus_rest, self.nuLnus4plotting))
+        elif self.output_type == 'best_fit':
+            distance = model.z2Dlum(data.z)
+            lumfactor = (4. * math.pi * distance**2.)
+            self.filtered_modelpoints_nuLnu = (filtered_modelpoints *lumfactor* 10**(data.nus))
 
 
     def FLUXES2nuLnu_4plotting(self, all_nus_rest, FLUXES4plotting, z):
@@ -582,19 +717,19 @@ def SED_plotting_settings(x, ydata, modeldata):
 
 
     mediandata = np.median(ydata)
-    ax1.set_ylim(mediandata /90.,mediandata * 50.)
+    ax1.set_ylim(mediandata /90.,mediandata * 100.)
     ax1.set_xlim(min(modeldata), max(modeldata))
 
     ax2.set_xscale('log')
     ax2.set_yscale('log')
-    ax2.set_ylim( mediandata /90., mediandata * 50.)
+    ax2.set_ylim( mediandata /90., mediandata * 100.)
 
 
     ax2.get_xaxis().set_major_formatter(ticker.ScalarFormatter())
     ax2.tick_params(axis='both',reset=False,which='major',length=8,width=1.5)
     ax2.tick_params(axis='both',reset=False,which='minor',length=4,width=1.5)
 
-    x2 = (2.98e14/ x)[::-1] # Wavelenght axis
+    x2 = (2.98e14/ x)[::-1] # Wavelength axis
 
     ax2.plot(x2, np.ones(len(x2)), alpha=0)
     ax2.invert_xaxis()
