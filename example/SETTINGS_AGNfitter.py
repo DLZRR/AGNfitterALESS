@@ -27,7 +27,7 @@ def CATALOG_settings():
 
 
     ##GENERAL
-    cat['path'] ='/home/roozemond/Music/ALESS_AGNfitter/'  #path to the AGNfitter code
+    cat['path'] ='/home/roozemond/Desktop/AGNfitterALESS-master/'  #path to the AGNfitter code
     cat['filename'] = cat['path']+'data/ALESS_TRUE_DATA.txt'
     cat['filetype'] = 'ASCII' ## catalog file type: 'ASCII' or 'FITS'. 
     cat['name'] = 0                 ## If ASCII: Column index (int) of source IDs
